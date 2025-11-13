@@ -2,7 +2,7 @@ name: Mise à jour quotidienne des prix
 
 on:
   schedule:
-    - cron: '0 18 * * 1-5'  # 20h FR
+    - cron: '0 11 * * 1-5'  # 20h FR
   workflow_dispatch:
 
 jobs:
