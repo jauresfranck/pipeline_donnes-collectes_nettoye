@@ -1,0 +1,30 @@
+name: Mise à jour quotidienne des prix
+
+on:
+  schedule:
+    - cron: '0 18 * * 1-5'  # 20h FR
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PUSH_TOKEN }}  # Ton PAT
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install yfinance tiingo pandas
+
+      - name: Run pipeline
+        env:
+          TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
+          PUSH_TOKEN: ${{ secrets.PUSH_TOKEN }}  # Passe le PAT
+        run: python stock_pipeline.py
