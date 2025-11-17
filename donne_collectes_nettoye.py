@@ -27,16 +27,27 @@ os.makedirs(TIINGO_FOLDER, exist_ok=True)
 
 def clean_data(df):
     df = df.copy()
+
+    # 1) on force la colonne date en datetime
     df['date'] = pd.to_datetime(df['date'])
+
+    # 2) on enlève l'heure (on garde juste la date)
+    df['date'] = df['date'].dt.normalize()  # équivalent à mettre 00:00:00
+
+    # 3) nettoyage classique
     df = df.dropna()
     df = df[df['High'] >= df['Low']]
     df = df[df['Volume'] >= 0]
     df = df.sort_values('date').drop_duplicates('date')
 
-    # Outliers sur Close (clip 3*IQR)
+    # 4) gestion des outliers sur Close (clip 3*IQR)
     Q1, Q3 = df['Close'].quantile([0.25, 0.75])
     IQR = Q3 - Q1
     df['Close'] = np.clip(df['Close'], Q1 - 3 * IQR, Q3 + 3 * IQR)
+
+    # 5) format final des dates pour les CSV : YYYY-MM-DD
+    df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+
     return df
 
 # ====================== YFINANCE ======================
@@ -49,7 +60,7 @@ def collect_yfinance():
     for s in symbols:
         df = yf.Ticker(s).history(period="1y").reset_index()
         df['symbol'] = s
-        df['date'] = df['Date'].dt.strftime('%Y-%m-%d')
+        df['date'] = df['Date']  # on laisse en datetime, clean_data s'occupe du format
         df = df[['date', 'Open', 'High', 'Low', 'Close', 'Volume', 'symbol']]
         df = clean_data(df)
         all_data.append(df)
@@ -71,7 +82,7 @@ def collect_tiingo():
 
     for s in symbols:
         df = client.get_dataframe(s, frequency='daily', startDate=start_date)
-        df = df.reset_index()
+        df = df.reset_index()  # 'date' devient une colonne datetime
         df['symbol'] = s
         df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'symbol']]
         df.columns = ['date', 'Open', 'High', 'Low', 'Close', 'Volume', 'symbol']
