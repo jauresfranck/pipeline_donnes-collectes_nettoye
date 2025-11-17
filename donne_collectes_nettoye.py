@@ -1,104 +1,93 @@
-import os
-os.environ['TIINGO_API_KEY'] = "6089e4e86bcae45b9faad86140282d40e5b18363" # REMPLACEZ PAR VOTRE VRAIE CLÉ API TIINGO
-import os
-os.environ['PUSH_TOKEN'] = "YOUR_GITHUB_PAT" # REMPLACEZ PAR VOTRE VRAI TOKEN D'ACCÈS PERSONNEL GITHUB
 # -*- coding: utf-8 -*-
 """
-PIPELINE PRIX → GIT REPO (commit + push auto)
-FONCTIONNE À 100%
+PIPELINE PRIX → CSV dans le dossier data/
+À utiliser avec GitHub Actions.
 """
-!pip install tiingo
+
 import os
 import pandas as pd
+import numpy as np
 from datetime import datetime
 import yfinance as yf
 from tiingo import TiingoClient
-import subprocess
 
 # ====================== CONFIG ======================
+
 TIINGO_API_KEY = os.getenv('TIINGO_API_KEY')
 if not TIINGO_API_KEY:
-    raise ValueError("TIINGO_API_KEY manquante !")
-PUSH_TOKEN = os.getenv('PUSH_TOKEN') # Ton PAT
-if not PUSH_TOKEN:
-    raise ValueError("PUSH_TOKEN manquant !")
-DATA_FOLDER = "data" # DOSSIER DANS LE REPO
+    raise ValueError("TIINGO_API_KEY manquante ! (définis-la dans les secrets GitHub)")
+
+DATA_FOLDER = "data"
+TIINGO_FOLDER = os.path.join(DATA_FOLDER, "tiingo")
+
 os.makedirs(DATA_FOLDER, exist_ok=True)
-os.makedirs(f"{DATA_FOLDER}/tiingo", exist_ok=True)
+os.makedirs(TIINGO_FOLDER, exist_ok=True)
+
+# ====================== CLEAN DATA ======================
+
+def clean_data(df):
+    df = df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.dropna()
+    df = df[df['High'] >= df['Low']]
+    df = df[df['Volume'] >= 0]
+    df = df.sort_values('date').drop_duplicates('date')
+
+    # Outliers sur Close (clip 3*IQR)
+    Q1, Q3 = df['Close'].quantile([0.25, 0.75])
+    IQR = Q3 - Q1
+    df['Close'] = np.clip(df['Close'], Q1 - 3 * IQR, Q3 + 3 * IQR)
+    return df
+
 # ====================== YFINANCE ======================
+
 def collect_yfinance():
     symbols = ["AAPL", "TSLA", "MSFT", "BTC-USD", "GOOGL"]
     all_data = []
-    print("yfinance...")
+    print("Collecte yfinance...")
+
     for s in symbols:
         df = yf.Ticker(s).history(period="1y").reset_index()
         df['symbol'] = s
         df['date'] = df['Date'].dt.strftime('%Y-%m-%d')
         df = df[['date', 'Open', 'High', 'Low', 'Close', 'Volume', 'symbol']]
+        df = clean_data(df)
         all_data.append(df)
-        df.to_csv(f"{DATA_FOLDER}/{s}.csv", index=False) # ← ICI DANS data/
-    pd.concat(all_data).to_csv(f"{DATA_FOLDER}/ALL_YFINANCE.csv", index=False)
+
+        df.to_csv(os.path.join(DATA_FOLDER, f"{s}.csv"), index=False)
+
+    pd.concat(all_data).to_csv(os.path.join(DATA_FOLDER, "ALL_YFINANCE.csv"), index=False)
     print("yfinance OK")
+
 # ====================== TIINGO ======================
+
 def collect_tiingo():
     client = TiingoClient({'api_key': TIINGO_API_KEY, 'session': True})
     symbols = ["AAPL", "TSLA", "MSFT", "GOOGL"]
     all_data = []
-    print("Tiingo...")
+    print("Collecte Tiingo...")
+
+    start_date = datetime.now().replace(year=datetime.now().year - 1)
+
     for s in symbols:
-        df = client.get_dataframe(s, frequency='daily', startDate=datetime.now().replace(year=datetime.now().year-1))
+        df = client.get_dataframe(s, frequency='daily', startDate=start_date)
         df = df.reset_index()
         df['symbol'] = s
         df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'symbol']]
         df.columns = ['date', 'Open', 'High', 'Low', 'Close', 'Volume', 'symbol']
+        df = clean_data(df)
         all_data.append(df)
-    pd.concat(all_data).to_csv(f"{DATA_FOLDER}/tiingo/ALL_TIINGO.csv", index=False)
+
+    pd.concat(all_data).to_csv(os.path.join(TIINGO_FOLDER, "ALL_TIINGO.csv"), index=False)
     print("Tiingo OK")
-# ====================== GIT COMMIT + PUSH ======================
-def commit_and_push():
-    print("Commit + Push avec PAT...")
 
-    # FIX IDENTITY CORRECT
-    subprocess.run(["git", "config", "user.email", "github-actions@github.com"])
-    subprocess.run(["git", "config", "user.name", "GitHub Actions Bot"])
-
-    # Add le dossier data/
-    subprocess.run(["git", "add", DATA_FOLDER])
-
-    # Commit
-    commit = subprocess.run(["git", "commit", "-m", f"Update prix {datetime.now().strftime('%Y-%m-%d')}"],
-                          capture_output=True, text=True)
-
-    if commit.returncode != 0 or "nothing to commit" in commit.stdout:
-        print("Rien à commiter (fichiers identiques)")
-        return
-
-    # Push avec PAT
-    repo = os.getenv('GITHUB_REPOSITORY')
-    url = f"https://{PUSH_TOKEN}@github.com/{repo}.git"
-    push = subprocess.run(["git", "push", url, "HEAD:main"], capture_output=True, text=True)
-
-    if push.returncode == 0:
-        print("PUSH RÉUSSI ! Nouveau commit sur main")
-    else:
-        print("ERREUR PUSH:", push.stderr)
 # ====================== MAIN ======================
-if __name__ == "__main__":
+
+def main():
     print("DÉBUT PIPELINE -", datetime.now().strftime("%Y-%m-%d %H:%M"))
     collect_yfinance()
     collect_tiingo()
-    commit_and_push()
-    print("TERMINÉ – PRIX DANS GIT REPO")
-def clean_data(df):
-    df = df.copy()
-    df['date'] = pd.to_datetime(df['date'])  # Uniformise
-    df = df.dropna()  # Supprime NaNs (rare)
-    df = df[df['High'] >= df['Low']]  # Incohérences
-    df = df[df['Volume'] >= 0]  # Volume négatif
-    df = df.sort_values('date').drop_duplicates('date')  # Doublons
-    # Outliers : Clip à 3*IQR (ex. pour Close)
-    Q1, Q3 = df['Close'].quantile([0.25, 0.75])
-    IQR = Q3 - Q1
-    df['Close'] = np.clip(df['Close'], Q1 - 3*IQR, Q3 + 3*IQR)
-    return df
-# Applique : df = clean_data(df)
+    print("TERMINÉ – PRIX DANS data/")
+
+if __name__ == "__main__":
+    main()
