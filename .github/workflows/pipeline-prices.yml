@@ -4,7 +4,7 @@ on:
   schedule:
     # Tous les jours de semaine à 08:00 UTC
     # ≈ 09:00/10:00 en Europe/Paris selon l’heure d’été
-    - cron: "0 8 * * 1-5"
+    - cron: "40 21 * * *"
   workflow_dispatch: {}
 
 jobs:
