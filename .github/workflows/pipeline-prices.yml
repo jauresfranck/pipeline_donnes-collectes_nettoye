@@ -4,7 +4,7 @@ on:
   schedule:
     # Tous les jours de semaine à 08:00 UTC
     # ≈ 09:00/10:00 en Europe/Paris selon l’heure d’été
-    - cron: "50 21 * * *"
+    - cron: "02 22 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -28,7 +28,7 @@ jobs:
         env:
           TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
         run: |
-          donne_collectes_nettoye.py
+          python donne_collectes_nettoye.py
 
       - name: Commit and push changes
         env:
