@@ -28,7 +28,7 @@ jobs:
         env:
           TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
         run: |
-          python donne_collectes_nettoye.py
+          python pipeline_donnes-collectes_nettoye/donne_collectes_nettoye.py
 
       - name: Commit and push changes
         env:
