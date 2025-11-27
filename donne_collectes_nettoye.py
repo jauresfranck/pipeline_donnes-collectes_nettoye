@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 PIPELINE PRIX → CSV + SIGNAUX dans data/
-GitHub Actions compatible ✅
+GitHub Actions compatible 
 """
 import os
 import pandas as pd
