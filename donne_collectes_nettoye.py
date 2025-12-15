@@ -71,12 +71,7 @@ class Prediction(Base):
     signal = Column(String)
     stock = relationship("Stock")
 
-class User(Base):
-    __tablename__ = 'users'
-    id = Column(Integer, primary_key=True)
-    email = Column(String, unique=True, nullable=False)
-    name = Column(String, nullable=False)
-    role = Column(String)
+
 
 # Créer tables
 Base.metadata.create_all(engine)
