@@ -11,12 +11,12 @@ from datetime import datetime, date
 import yfinance as yf
 from tiingo import TiingoClient
 import subprocess
-from sqlalchemy import text 
 
 # SQLAlchemy imports
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text  # ← Ajout pour DROP executable
 
 # ====================== CONFIG ======================
 TIINGO_API_KEY = os.getenv('TIINGO_API_KEY')
@@ -26,7 +26,7 @@ os.makedirs(DATA_FOLDER, exist_ok=True)
 os.makedirs(TIINGO_FOLDER, exist_ok=True)
 
 # BD Config (SQLite)
-engine = create_engine('sqlite:///stock_predictor.db', echo=False)  # echo=True pour debug logs
+engine = create_engine('sqlite:///stock_predictor.db', echo=False)
 Base = declarative_base()
 
 # ====================== BD Modèles ======================
@@ -72,8 +72,6 @@ class Prediction(Base):
     signal = Column(String)
     stock = relationship("Stock")
 
-
-
 # Créer tables
 Base.metadata.create_all(engine)
 
@@ -106,7 +104,7 @@ def collect_yfinance():
     # Init Stocks
     for s in symbols:
         stock = Stock(symbol=s['symbol'], name=s['name'], sector=s['sector'])
-        session.merge(stock)  # Merge pour update si existe
+        session.merge(stock)
     
     all_data = []
     print("Collecte yfinance...")
@@ -128,7 +126,7 @@ def collect_yfinance():
                 open=row['Open'], high=row['High'], low=row['Low'],
                 close=row['Close'], volume=row['Volume']
             )
-            session.merge(hist)  # Merge pour éviter doublons
+            session.merge(hist)
     
     pd.concat(all_data).to_csv(os.path.join(DATA_FOLDER, "ALL_YFINANCE.csv"), index=False)
     session.commit()
@@ -180,7 +178,7 @@ def generate_signals():
         data['date'] = pd.to_datetime(data['date'])
         data = data.sort_values('date')
         
-        # Calcul features (comme avant)
+        # Calcul features
         data['ma20'] = data['Close'].rolling(20).mean()
         data['std20'] = data['Close'].rolling(20).std()
         data['upper_bb'] = data['ma20'] + 2 * data['std20']
@@ -221,11 +219,11 @@ def generate_signals():
         )
         session.merge(feat)
         
-        # Insert Prediction (baseline rule-based)
+        # Insert Prediction
         pred = Prediction(
             date=last['date'].date(),
             symbol=symbol,
-            predicted_close=last['Close'],  # Placeholder ; remplace par ML pred
+            predicted_close=last['Close'],
             actual_close=last['Close'],
             model='Baseline',
             signal=signal
@@ -270,20 +268,18 @@ def main():
     collect_tiingo()
     generate_signals()
     commit_and_push()
+    # TEMPORAIRE : Vérif & Drop table 'users' si existe (ajoute une fois, puis retire)
+    with engine.connect() as conn:
+        # Vérif existence
+        result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='users';")).fetchone()
+        if result:
+            print("Table 'users' détectée – suppression en cours...")
+            conn.execute(text("DROP TABLE users;"))
+            conn.commit()
+            print("Table 'users' supprimée définitivement !")
+        else:
+            print("Table 'users' n'existe déjà plus.")
     print("TERMINÉ – Données stockées en BD & dans data/")
 
 if __name__ == "__main__":
     main()
-
-
-
-with engine.connect() as conn:
-    # Vérif existence
-    result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='users';")).fetchone()
-    if result:
-        print("Table 'users' détectée – suppression en cours...")
-        conn.execute(text("DROP TABLE users;"))
-        conn.commit()
-        print("Table 'users' supprimée définitivement !")
-    else:
-        print("Table 'users' n'existe déjà plus.")
