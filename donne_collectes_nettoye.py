@@ -277,3 +277,13 @@ if __name__ == "__main__":
 
 
 
+with engine.connect() as conn:
+    # Vérif existence
+    result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='users';")).fetchone()
+    if result:
+        print("Table 'users' détectée – suppression en cours...")
+        conn.execute(text("DROP TABLE users;"))
+        conn.commit()
+        print("Table 'users' supprimée définitivement !")
+    else:
+        print("Table 'users' n'existe déjà plus.")
