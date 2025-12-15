@@ -11,6 +11,7 @@ from datetime import datetime, date
 import yfinance as yf
 from tiingo import TiingoClient
 import subprocess
+from sqlalchemy import text 
 
 # SQLAlchemy imports
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey
@@ -274,6 +275,10 @@ def main():
 if __name__ == "__main__":
     main()
 
-# À la fin du script, une seule fois
-User.__table__.drop(engine, checkfirst=True)
-print("Table users supprimée si elle existait")
+
+
+# ... dans main() ou à la fin du script, une seule fois
+with engine.connect() as conn:
+    conn.execute(text("DROP TABLE IF EXISTS users;"))
+    conn.commit()
+    print("Table 'users' supprimée avec succès de la base de données !")
