@@ -277,8 +277,3 @@ if __name__ == "__main__":
 
 
 
-# ... dans main() ou à la fin du script, une seule fois
-with engine.connect() as conn:
-    conn.execute(text("DROP TABLE IF EXISTS users;"))
-    conn.commit()
-    print("Table 'users' supprimée avec succès de la base de données !")
