@@ -274,8 +274,6 @@ def main():
 if __name__ == "__main__":
     main()
 
-# À exécuter UNE SEULE FOIS pour supprimer la table users existante
-with engine.connect() as conn:
-    conn.execute("DROP TABLE IF EXISTS users;")
-    conn.commit()
-print("Table users supprimée de la base de données")
+# À la fin du script, une seule fois
+User.__table__.drop(engine, checkfirst=True)
+print("Table users supprimée si elle existait")
