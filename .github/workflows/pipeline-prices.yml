@@ -1,9 +1,9 @@
-name: Pipeline prix bourse  # Nom du workflow
+name: Pipeline prix bourse
 
-on:  # Déclencheurs (pas de ligne vide ici)
+on:
   schedule:
     - cron: "0 20 * * *"  # 20h UTC = 21h FR
-  workflow_dispatch: {}  # Lancement manuel
+  workflow_dispatch: {}
 
 jobs:
   run-pipeline:
