@@ -1,25 +1,32 @@
 name: Pipeline prix bourse
+
 on:
   schedule:
-    - cron: "0 20 * * *"  # 20h UTC = 21h FR
-  workflow_dispatch:
+    - cron: "0 20 * * *"  # 20h UTC = 21h FR (hiver)
+  workflow_dispatch: {}  # Lancement manuel
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install dependencies
         run: |
-          pip install yfinance tiingo pandas numpy tabulate sqlalchemy
+          pip install yfinance tiingo pandas numpy tabulate sqlalchemy psycopg2-binary  # Ajout psycopg2-binary pour PostgreSQL
+
       - name: Run pipeline script
         env:
           TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
-        run: python donne_collectes_nettoye.py  # ← Chemin simplifié
+          DB_URL: ${{ secrets.DB_URL }}  # ← Ligne essentielle : passe DB_URL au script
+        run: python donne_collectes_nettoye.py  # Ton chemin simplifié
+
       - name: Commit and push changes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -27,7 +34,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "kizsnana@gmail.com"
           if [ -n "$(git status --porcelain)" ]; then
-            git add data stock_predictor.db
+            git add data  # Plus de .db – BD en cloud
             git commit -m "Auto: update prix $(date -u +"%Y-%m-%d %H:%M:%S")"
             git push
           else
