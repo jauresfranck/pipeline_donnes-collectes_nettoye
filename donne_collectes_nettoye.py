@@ -61,7 +61,7 @@ def collect_yfinance():
             df = yf.Ticker(sym_str).history(period="1y").reset_index()
             
             if df.empty:
-                print(f"❌ Aucune donnée reçue pour {sym_str}")
+                print(f" Aucune donnée reçue pour {sym_str}")
                 continue
                 
             df['symbol'] = sym_str
@@ -96,7 +96,7 @@ def collect_yfinance():
             print(f"✅ {sym_str} : Sauvegardé en BD.")
 
         except Exception as e:
-            print(f"❌ CRASH sur {sym_str}: {e}")
+            print(f" CRASH sur {sym_str}: {e}")
             session.rollback() # Annule l'erreur pour passer au suivant
 
     # Sauvegarde CSV global
