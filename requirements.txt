@@ -1,0 +1,6 @@
+pandas
+numpy
+yfinance
+tiingo
+sqlalchemy
+psycopg2-binary
