@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 PIPELINE COMPLET : Collecte → Nettoyage → Signaux → BD PostgreSQL Cloud → Update auto
-Modifié pour SUPABASE
+Modifié pour SUPABASE avec LISTE ÉLARGIE (23 actifs)
 """
 import os
+import time
 import pandas as pd
 import numpy as np
 from datetime import datetime, date
@@ -12,17 +13,16 @@ from tiingo import TiingoClient
 import subprocess
 
 # SQLAlchemy imports
-# AJOUT DE BigInteger car les volumes boursiers sont énormes
 from sqlalchemy import create_engine, Column, Integer, String, Float, Date, ForeignKey, BigInteger
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 # ====================== CONFIG ======================
 TIINGO_API_KEY = os.getenv('TIINGO_API_KEY')
-
-# RECUPERATION DE L'URL SUPABASE
 DB_URL = os.getenv('DB_URL')
+
 if not DB_URL:
-    raise ValueError("DB_URL manquante – configure-la dans secrets GitHub !")
+    # Fallback pour éviter le crash si lancé en local sans env, mais plantera à la connexion
+    print("⚠️ Attention : DB_URL non trouvée.")
 
 DATA_FOLDER = "data"
 TIINGO_FOLDER = os.path.join(DATA_FOLDER, "tiingo")
@@ -30,9 +30,13 @@ os.makedirs(DATA_FOLDER, exist_ok=True)
 os.makedirs(TIINGO_FOLDER, exist_ok=True)
 
 # BD Config (PostgreSQL via Supabase)
-# On utilise DB_URL au lieu de sqlite:///...
-engine = create_engine(DB_URL, echo=False)
-Base = declarative_base()
+try:
+    engine = create_engine(DB_URL, echo=False)
+    Base = declarative_base()
+except Exception as e:
+    print(f"Erreur Config DB: {e}")
+    engine = None
+    Base = declarative_base()
 
 # ====================== BD Modèles ======================
 class Stock(Base):
@@ -50,8 +54,7 @@ class HistoricalData(Base):
     high = Column(Float)
     low = Column(Float)
     close = Column(Float)
-    # CHANGEMENT ICI : BigInteger pour éviter les erreurs de dépassement
-    volume = Column(BigInteger) 
+    volume = Column(BigInteger)
     stock = relationship("Stock")
 
 class Feature(Base):
@@ -78,9 +81,10 @@ class Prediction(Base):
     signal = Column(String)
     stock = relationship("Stock")
 
-# Créer tables (Supabase va créer les tables si elles n'existent pas)
-Base.metadata.create_all(engine)
-Session = sessionmaker(bind=engine)
+# Création des tables si nécessaire
+if engine:
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
 
 # ====================== CLEAN DATA ======================
 def clean_data(df):
@@ -88,13 +92,12 @@ def clean_data(df):
     df['date'] = pd.to_datetime(df['date']).dt.normalize()
     df = df.dropna()
     
-    # Conversion explicite des types pour éviter les erreurs SQL
     cols_float = ['Open', 'High', 'Low', 'Close']
     for col in cols_float:
         df[col] = df[col].astype(float)
     
     if 'Volume' in df.columns:
-        df['Volume'] = df['Volume'].astype('int64') # int64 pour BigInteger
+        df['Volume'] = df['Volume'].astype('int64')
 
     df = df[df['High'] >= df['Low']]
     df = df[df['Volume'] >= 0]
@@ -107,50 +110,88 @@ def clean_data(df):
     df['date'] = df['date'].dt.strftime('%Y-%m-%d')
     return df
 
-# ====================== COLLECTE & INSERT BD ======================
+# ====================== COLLECTE YFINANCE ======================
 def collect_yfinance():
+    if not engine: return
     session = Session()
-    symbols = [{"symbol": "AAPL", "name": "Apple Inc.", "sector": "Tech"},
-               {"symbol": "TSLA", "name": "Tesla Inc.", "sector": "Auto"},
-               {"symbol": "MSFT", "name": "Microsoft Corp.", "sector": "Tech"},
-               {"symbol": "BTC", "name": "Bitcoin USD", "sector": "Crypto"},
-               {"symbol": "GOOGL", "name": "Alphabet Inc.", "sector": "Tech"}]
+    print("\n--- DÉBUT COLLECTE YFINANCE (23 ACTIFS) ---")
+    
+    # LISTE COMPLÈTE RÉCUPÉRÉE
+    symbols = [
+        # Big Tech
+        {"symbol": "AAPL", "name": "Apple Inc.", "sector": "Technology"},
+        {"symbol": "MSFT", "name": "Microsoft Corp.", "sector": "Technology"},
+        {"symbol": "GOOGL", "name": "Alphabet Inc.", "sector": "Communication Services"},
+        {"symbol": "AMZN", "name": "Amazon.com Inc.", "sector": "Consumer Cyclical"},
+        {"symbol": "META", "name": "Meta Platforms", "sector": "Communication Services"},
+        {"symbol": "NVDA", "name": "NVIDIA Corp.", "sector": "Technology"},
+        {"symbol": "TSLA", "name": "Tesla Inc.", "sector": "Consumer Cyclical"},
+        {"symbol": "INTC", "name": "Intel Corp.", "sector": "Technology"},
+        {"symbol": "AMD", "name": "Advanced Micro Devices", "sector": "Technology"},
+        {"symbol": "IBM", "name": "IBM", "sector": "Technology"},
+        {"symbol": "ORCL", "name": "Oracle Corp.", "sector": "Technology"},
+        {"symbol": "NFLX", "name": "Netflix Inc.", "sector": "Communication Services"},
+
+        # Startups / Growth
+        {"symbol": "PLTR", "name": "Palantir Technologies", "sector": "Technology"},
+        {"symbol": "SNOW", "name": "Snowflake Inc.", "sector": "Technology"},
+        {"symbol": "SHOP", "name": "Shopify Inc.", "sector": "Technology"},
+        {"symbol": "COIN", "name": "Coinbase Global", "sector": "Financial Services"},
+        {"symbol": "ROKU", "name": "Roku Inc.", "sector": "Communication Services"},
+        {"symbol": "U", "name": "Unity Software", "sector": "Technology"},
+        {"symbol": "CRWD", "name": "CrowdStrike Holdings", "sector": "Technology"},
+        {"symbol": "ZS", "name": "Zscaler Inc.", "sector": "Technology"},
+        {"symbol": "RIVN", "name": "Rivian Automotive", "sector": "Consumer Cyclical"},
+        {"symbol": "LCID", "name": "Lucid Group", "sector": "Consumer Cyclical"},
+
+        # Crypto
+        {"symbol": "BTC-USD", "name": "Bitcoin USD", "sector": "Crypto"},
+    ]
    
-    # Init Stocks
+    # 1. Init Stocks
     try:
         for s in symbols:
             stock = Stock(symbol=s['symbol'], name=s['name'], sector=s['sector'])
             session.merge(stock)
         session.commit()
     except Exception as e:
-        print(f"Erreur init stocks: {e}")
+        print(f"⚠️ Erreur Init Stocks: {e}")
         session.rollback()
    
     all_data = []
-    print("Collecte yfinance...")
-    
-    for s in [sym['symbol'] for sym in symbols]:
-        ticker = s if s != "BTC" else "BTC-USD"
+
+    # 2. Boucle Tickers
+    for s in symbols:
+        sym_str = s['symbol']
+        print(f"📡 Récupération {sym_str}...")
         
         try:
+            # Petite pause pour ne pas brusquer l'API Yahoo
+            time.sleep(1) 
+            
+            # Récupération
+            ticker = sym_str # yfinance gère très bien "BTC-USD"
             df = yf.Ticker(ticker).history(period="1y").reset_index()
+            
             if df.empty:
-                print(f"Pas de données pour {s}")
+                print(f"❌ Aucune donnée pour {sym_str}")
                 continue
 
-            df['symbol'] = s
+            df['symbol'] = sym_str
             df['date'] = df['Date']
+            
+            # Vérif colonnes
+            if not all(col in df.columns for col in ['Open', 'High', 'Low', 'Close', 'Volume']):
+                continue
+
             df = df[['date', 'Open', 'High', 'Low', 'Close', 'Volume', 'symbol']]
             df = clean_data(df)
             all_data.append(df)
             
-            # Sauvegarde CSV locale (optionnel maintenant)
-            df.to_csv(os.path.join(DATA_FOLDER, f"{s}.csv"), index=False)
+            # Sauvegarde CSV locale
+            df.to_csv(os.path.join(DATA_FOLDER, f"{sym_str}.csv"), index=False)
         
-            # Insert HistoricalData
-            # Note: session.merge avec un ID autoincrement risque de créer des doublons 
-            # si on relance le script plusieurs fois. 
-            # Pour un projet simple, on vide ou on gère ça plus tard.
+            # Insertion BD
             for _, row in df.iterrows():
                 hist = HistoricalData(
                     date=datetime.strptime(row['date'], '%Y-%m-%d').date(),
@@ -162,29 +203,33 @@ def collect_yfinance():
                     volume=int(row['Volume'])
                 )
                 session.merge(hist)
+            
             session.commit()
-            print(f"{s} inséré en base.")
+            print(f"✅ {sym_str} : Sauvegardé.")
             
         except Exception as e:
-            print(f"Erreur sur {s}: {e}")
+            print(f"❌ Erreur sur {sym_str}: {e}")
             session.rollback()
    
     if all_data:
         pd.concat(all_data).to_csv(os.path.join(DATA_FOLDER, "ALL_YFINANCE.csv"), index=False)
     
     session.close()
-    print("yfinance & BD insert OK")
+    print("--- FIN YFINANCE ---\n")
 
+# ====================== COLLECTE TIINGO ======================
 def collect_tiingo():
     if not TIINGO_API_KEY:
-        print("TIINGO_API_KEY absente → Tiingo ignoré")
+        print("Info: TIINGO_API_KEY absente.")
         return
+    if not engine: return
     
     session = Session()
     client = TiingoClient({'api_key': TIINGO_API_KEY, 'session': True})
+    # On garde une liste réduite pour Tiingo (souvent limité en version gratuite)
     symbols = ["AAPL", "TSLA", "MSFT", "GOOGL"]
     all_data = []
-    print("Collecte Tiingo...")
+    print("--- DÉBUT COLLECTE TIINGO ---")
     start_date = datetime.now().replace(year=datetime.now().year - 1)
     
     for s in symbols:
@@ -211,25 +256,27 @@ def collect_tiingo():
                 )
                 session.merge(hist)
             session.commit()
+            print(f"✅ {s} (Tiingo) : Sauvegardé.")
             
         except Exception as e:
-            print(f"Erreur Tiingo {s}: {e}")
+            print(f"⚠️ Erreur Tiingo {s}: {e}")
             session.rollback()
    
     if all_data:
         pd.concat(all_data).to_csv(os.path.join(TIINGO_FOLDER, "ALL_TIINGO.csv"), index=False)
     
     session.close()
-    print("Tiingo & BD insert OK")
+    print("--- FIN TIINGO ---\n")
 
-# ====================== SIGNAUX, FEATURES & PREDICTIONS BD ======================
+# ====================== SIGNAUX ======================
 def generate_signals():
+    if not engine: return
     session = Session()
+    print("--- GÉNÉRATION DES SIGNAUX ---")
     
-    # On lit le CSV généré juste avant pour calculer les signaux
     csv_path = os.path.join(DATA_FOLDER, "ALL_YFINANCE.csv")
     if not os.path.exists(csv_path):
-        print("Fichier ALL_YFINANCE.csv manquant")
+        print("❌ Fichier ALL_YFINANCE.csv manquant.")
         return
 
     df = pd.read_csv(csv_path)
@@ -243,7 +290,7 @@ def generate_signals():
             data['date'] = pd.to_datetime(data['date'])
             data = data.sort_values('date')
         
-            # Calcul features
+            # Calculs Techniques
             data['ma20'] = data['Close'].rolling(20).mean()
             data['std20'] = data['Close'].rolling(20).std()
             data['upper_bb'] = data['ma20'] + 2 * data['std20']
@@ -252,31 +299,24 @@ def generate_signals():
             delta = data['Close'].diff()
             up = delta.clip(lower=0)
             down = -delta.clip(upper=0)
-            roll_up = up.ewm(alpha=1/14, adjust=False).mean()
-            roll_down = down.ewm(alpha=1/14, adjust=False).mean()
-            rs = roll_up / roll_down
+            rs = up.ewm(alpha=1/14).mean() / down.ewm(alpha=1/14).mean()
             data['rsi'] = 100 - (100 / (1 + rs))
             
-            ema12 = data['Close'].ewm(span=12, adjust=False).mean()
-            ema26 = data['Close'].ewm(span=26, adjust=False).mean()
-            data['macd'] = ema12 - ema26
-            data['signal_line'] = data['macd'].ewm(span=9, adjust=False).mean()
+            data['macd'] = data['Close'].ewm(span=12).mean() - data['Close'].ewm(span=26).mean()
+            data['signal_line'] = data['macd'].ewm(span=9).mean()
             
             data['close_lag1'] = data['Close'].shift(1)
             data['ma_5'] = data['Close'].rolling(5).mean()
             data['volatility'] = data['Close'].rolling(5).std()
         
             last = data.iloc[-1]
-            prev = data.iloc[-2]
-        
             bb_pos = 'BELOW' if last['Close'] < last['lower_bb'] else 'ABOVE' if last['Close'] > last['upper_bb'] else 'INSIDE'
             
-            buy_cond = (last['rsi'] < 30) + (last['Close'] < last['lower_bb']) + (last['macd'] > last['signal_line'])
-            sell_cond = (last['rsi'] > 70) + (last['Close'] > last['upper_bb']) + (last['macd'] < last['signal_line'] and prev['macd'] >= prev['signal_line'])
+            buy_cond = (last['rsi'] < 30) or (last['Close'] < last['lower_bb']) or (last['macd'] > last['signal_line'])
+            sell_cond = (last['rsi'] > 70) or (last['Close'] > last['upper_bb']) or (last['macd'] < last['signal_line'])
             
-            signal = "BUY" if buy_cond >= 2 else "SELL" if sell_cond >= 2 else "HOLD"
+            signal = "BUY" if buy_cond else "SELL" if sell_cond else "HOLD"
         
-            # Helpers pour gérer les NaN avant insertion
             def safe_float(val):
                 return float(val) if pd.notna(val) else 0.0
 
@@ -305,41 +345,39 @@ def generate_signals():
             signals.append({
                 'symbol': symbol, 
                 'date': last['date'].strftime('%Y-%m-%d'), 
-                'close': round(last['Close'], 2),
-                'rsi': round(last['rsi'], 2), 
+                'close': round(safe_float(last['Close']), 2),
+                'rsi': round(safe_float(last['rsi']), 2),
                 'recommendation': signal
             })
             session.commit()
             
         except Exception as e:
-            print(f"Erreur signaux {symbol}: {e}")
+            print(f"❌ Erreur signal {symbol}: {e}")
             session.rollback()
    
     if signals:
         signals_df = pd.DataFrame(signals)
         signals_df.to_csv(os.path.join(DATA_FOLDER, "latest_signals.csv"), index=False)
-        print("\n=== SIGNAUX DU JOUR ===")
-        print(signals_df.to_markdown(index=False))
+        try:
+            print("\n=== SIGNAUX DU JOUR ===")
+            print(signals_df.to_markdown(index=False))
+        except ImportError:
+            print(signals_df) # Fallback si tabulate manque
         
     session.close()
 
-# ====================== COMMIT & PUSH ======================
+# ====================== GIT PUSH ======================
 def commit_and_push():
-    # On ne push plus la DB locale car on utilise Supabase
-    # On push uniquement les CSV (data/) pour garder une trace, mais c'est optionnel
     subprocess.run(["git", "config", "user.name", "GitHub Actions Bot"])
     subprocess.run(["git", "config", "user.email", "github-actions@github.com"])
-    
-    # On ajoute uniquement le dossier data
     subprocess.run(["git", "add", "data/"])
-    
-    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-    if result.stdout.strip():
-        subprocess.run(["git", "commit", "-m", f"Auto-update data {datetime.now().strftime('%Y-%m-%d')}"])
+    res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    if res.stdout.strip():
+        subprocess.run(["git", "commit", "-m", f"Auto-update {datetime.now().strftime('%Y-%m-%d')}"])
         subprocess.run(["git", "push"])
-        print("✅ Données CSV mises à jour sur GitHub (DB sur Supabase).")
+        print("✅ Données CSV pushées.")
     else:
-        print("Info: Pas de changements CSV à pusher.")
+        print("Info: Pas de changements CSV.")
 
 # ====================== MAIN ======================
 def main():
