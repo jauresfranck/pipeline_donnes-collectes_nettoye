@@ -1,38 +1,48 @@
 name: Mise à jour quotidienne des prix
+
 on:
   schedule:
     - cron: '0 19 * * 1-5'  # 19h UTC = 20h FR
-  workflow_dispatch:
+  workflow_dispatch: # Permet de lancer manuellement le script
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    
+    # ✅ Cette permission est CRUCIALE : elle autorise le push sans token personnel
     permissions:
       contents: write
+
     steps:
+      # CORRECTION ICI : On supprime la ligne "token: ..." inutile
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PUSH_TOKEN }}
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      # Installation des librairies (psycopg2-binary est bien là pour Supabase !)
       - name: Install dependencies
-        run: pip install yfinance tiingo pandas sqlalchemy psycopg2-binary  # Ajout psycopg2-binary
+        run: |
+          pip install --upgrade pip
+          pip install yfinance tiingo pandas sqlalchemy psycopg2-binary
+
       - name: Run pipeline
         env:
           TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
-          DB_URL: ${{ secrets.DB_URL }}  # Ajout
-        run: python donne_collectes_nettoye.py  # Ajuste si besoin
+          DB_URL: ${{ secrets.DB_URL }}
+        run: python donne_collectes_nettoye.py
+
       - name: Commit and push changes
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "kizsnana@gmail.com"
-          if [ -n "$(git status --porcelain)" ]; then
-            git add data  # Plus de .db
-            git commit -m "Auto: update prix $(date -u +"%Y-%m-%d %H:%M:%S")"
-            git push
-          else
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data
+          # On vérifie s'il y a des changements avant de commit pour éviter une erreur
+          if git diff --staged --quiet; then
             echo "Aucun changement à committer."
+          else
+            git commit -m "Auto: update prix $(date -u +'%Y-%m-%d %H:%M:%S')"
+            git push
           fi
