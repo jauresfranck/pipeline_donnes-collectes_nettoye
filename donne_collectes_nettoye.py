@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 PIPELINE COMPLET : Collecte → Nettoyage → Signaux → BD PostgreSQL Cloud → Update auto
-Modifié pour SUPABASE avec LISTE ÉLARGIE (23 actifs)
+Modifié pour SUPABASE avec LISTE ÉLARGIE (23 actifs) + SYNCHRO SENTIMENTS NLP (FinBERT)
 """
 import os
 import time
@@ -81,6 +81,16 @@ class Prediction(Base):
     signal = Column(String)
     stock = relationship("Stock")
 
+# NOUVELLE TABLE : Pour stocker l'humeur des articles de presse
+class DailySentiment(Base):
+    __tablename__ = 'daily_sentiment'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False)
+    symbol = Column(String, ForeignKey('stocks.symbol'), nullable=False)
+    sentiment_score = Column(Float, default=0.0)
+    articles_count = Column(Integer, default=0)
+    stock = relationship("Stock")
+
 # Création des tables si nécessaire
 if engine:
     Base.metadata.create_all(engine)
@@ -116,9 +126,7 @@ def collect_yfinance():
     session = Session()
     print("\n--- DÉBUT COLLECTE YFINANCE (23 ACTIFS) ---")
     
-    # LISTE COMPLÈTE RÉCUPÉRÉE
     symbols = [
-        # Big Tech
         {"symbol": "AAPL", "name": "Apple Inc.", "sector": "Technology"},
         {"symbol": "MSFT", "name": "Microsoft Corp.", "sector": "Technology"},
         {"symbol": "GOOGL", "name": "Alphabet Inc.", "sector": "Communication Services"},
@@ -131,8 +139,6 @@ def collect_yfinance():
         {"symbol": "IBM", "name": "IBM", "sector": "Technology"},
         {"symbol": "ORCL", "name": "Oracle Corp.", "sector": "Technology"},
         {"symbol": "NFLX", "name": "Netflix Inc.", "sector": "Communication Services"},
-
-        # Startups / Growth
         {"symbol": "PLTR", "name": "Palantir Technologies", "sector": "Technology"},
         {"symbol": "SNOW", "name": "Snowflake Inc.", "sector": "Technology"},
         {"symbol": "SHOP", "name": "Shopify Inc.", "sector": "Technology"},
@@ -143,12 +149,9 @@ def collect_yfinance():
         {"symbol": "ZS", "name": "Zscaler Inc.", "sector": "Technology"},
         {"symbol": "RIVN", "name": "Rivian Automotive", "sector": "Consumer Cyclical"},
         {"symbol": "LCID", "name": "Lucid Group", "sector": "Consumer Cyclical"},
-
-        # Crypto
         {"symbol": "BTC-USD", "name": "Bitcoin USD", "sector": "Crypto"},
     ]
-   
-    # 1. Init Stocks
+    
     try:
         for s in symbols:
             stock = Stock(symbol=s['symbol'], name=s['name'], sector=s['sector'])
@@ -157,30 +160,23 @@ def collect_yfinance():
     except Exception as e:
         print(f"⚠️ Erreur Init Stocks: {e}")
         session.rollback()
-   
+    
     all_data = []
 
-    # 2. Boucle Tickers
     for s in symbols:
         sym_str = s['symbol']
         print(f"📡 Récupération {sym_str}...")
         
         try:
-            # Petite pause pour ne pas brusquer l'API Yahoo
             time.sleep(1) 
-            
-            # Récupération
-            ticker = sym_str # yfinance gère très bien "BTC-USD"
-            df = yf.Ticker(ticker).history(period="1y").reset_index()
+            df = yf.Ticker(sym_str).history(period="1y").reset_index()
             
             if df.empty:
-                print(f"❌ Aucune donnée pour {sym_str}")
                 continue
 
             df['symbol'] = sym_str
             df['date'] = df['Date']
             
-            # Vérif colonnes
             if not all(col in df.columns for col in ['Open', 'High', 'Low', 'Close', 'Volume']):
                 continue
 
@@ -188,10 +184,8 @@ def collect_yfinance():
             df = clean_data(df)
             all_data.append(df)
             
-            # Sauvegarde CSV locale
             df.to_csv(os.path.join(DATA_FOLDER, f"{sym_str}.csv"), index=False)
         
-            # Insertion BD
             for _, row in df.iterrows():
                 hist = HistoricalData(
                     date=datetime.strptime(row['date'], '%Y-%m-%d').date(),
@@ -210,7 +204,7 @@ def collect_yfinance():
         except Exception as e:
             print(f"❌ Erreur sur {sym_str}: {e}")
             session.rollback()
-   
+    
     if all_data:
         pd.concat(all_data).to_csv(os.path.join(DATA_FOLDER, "ALL_YFINANCE.csv"), index=False)
     
@@ -226,7 +220,6 @@ def collect_tiingo():
     
     session = Session()
     client = TiingoClient({'api_key': TIINGO_API_KEY, 'session': True})
-    # On garde une liste réduite pour Tiingo (souvent limité en version gratuite)
     symbols = ["AAPL", "TSLA", "MSFT", "GOOGL"]
     all_data = []
     print("--- DÉBUT COLLECTE TIINGO ---")
@@ -261,7 +254,7 @@ def collect_tiingo():
         except Exception as e:
             print(f"⚠️ Erreur Tiingo {s}: {e}")
             session.rollback()
-   
+    
     if all_data:
         pd.concat(all_data).to_csv(os.path.join(TIINGO_FOLDER, "ALL_TIINGO.csv"), index=False)
     
@@ -290,7 +283,6 @@ def generate_signals():
             data['date'] = pd.to_datetime(data['date'])
             data = data.sort_values('date')
         
-            # Calculs Techniques
             data['ma20'] = data['Close'].rolling(20).mean()
             data['std20'] = data['Close'].rolling(20).std()
             data['upper_bb'] = data['ma20'] + 2 * data['std20']
@@ -354,7 +346,7 @@ def generate_signals():
         except Exception as e:
             print(f"❌ Erreur signal {symbol}: {e}")
             session.rollback()
-   
+    
     if signals:
         signals_df = pd.DataFrame(signals)
         signals_df.to_csv(os.path.join(DATA_FOLDER, "latest_signals.csv"), index=False)
@@ -362,9 +354,66 @@ def generate_signals():
             print("\n=== SIGNAUX DU JOUR ===")
             print(signals_df.to_markdown(index=False))
         except ImportError:
-            print(signals_df) # Fallback si tabulate manque
+            print(signals_df) 
         
     session.close()
+
+# ====================== NOUVEAU : SYNCHRONISATION SENTIMENTS ======================
+def sync_sentiment_to_db():
+    if not engine: return
+    session = Session()
+    print("\n--- SYNCHRONISATION DES SENTIMENTS NLP VERS LA BD ---")
+    
+    # URL directe vers le fichier généré par le script de votre partenaire
+    github_url = "https://raw.githubusercontent.com/adam-hassen/stock-auto-update/main/data/articles_sentiment/ALL_ARTICLES_MASTER.csv"
+    local_path = "data/articles_sentiment/ALL_ARTICLES_MASTER.csv"
+    
+    try:
+        # On essaie d'abord de lire en local, sinon on prend sur internet
+        if os.path.exists(local_path):
+            df_news = pd.read_csv(local_path)
+            print("Fichier local NLP trouvé.")
+        else:
+            df_news = pd.read_csv(github_url)
+            print("Fichier NLP téléchargé depuis GitHub.")
+            
+        if df_news.empty:
+            print("Le fichier NLP est vide.")
+            return
+
+        # Nettoyage de la date (pour n'avoir que le format AAAA-MM-JJ)
+        df_news['date_clean'] = pd.to_datetime(df_news['date_publication']).dt.date
+        
+        # On groupe par action (symbol) et par jour pour faire la moyenne du sentiment
+        daily_stats = df_news.groupby(['symbol', 'date_clean']).agg(
+            sentiment_score=('score_pondere', 'mean'),
+            articles_count=('article_id', 'count')
+        ).reset_index()
+
+        for _, row in daily_stats.iterrows():
+            # Vérifie si l'enregistrement existe déjà pour ce jour et ce symbole
+            existing = session.query(DailySentiment).filter_by(date=row['date_clean'], symbol=str(row['symbol'])).first()
+            
+            if existing:
+                existing.sentiment_score = float(row['sentiment_score'])
+                existing.articles_count = int(row['articles_count'])
+            else:
+                new_sentiment = DailySentiment(
+                    date=row['date_clean'],
+                    symbol=str(row['symbol']),
+                    sentiment_score=float(row['sentiment_score']),
+                    articles_count=int(row['articles_count'])
+                )
+                session.add(new_sentiment)
+                
+        session.commit()
+        print(f"✅ {len(daily_stats)} jours de scores NLP insérés/mis à jour dans la base Supabase !")
+
+    except Exception as e:
+        print(f"❌ Erreur lors de la synchronisation des sentiments : {e}")
+        session.rollback()
+    finally:
+        session.close()
 
 # ====================== GIT PUSH ======================
 def commit_and_push():
@@ -385,6 +434,7 @@ def main():
     collect_yfinance()
     collect_tiingo()
     generate_signals()
+    sync_sentiment_to_db() # <-- NOUVELLE ÉTAPE AJOUTÉE ICI
     commit_and_push()
     print("🏁 PIPELINE TERMINÉ")
 
