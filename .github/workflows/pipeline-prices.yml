@@ -1,4 +1,4 @@
-name: Mise à jour quotidienne des prix
+name: Mise à jour quotidienne (Prix + Sentiments)
 
 on:
   schedule:
@@ -14,7 +14,6 @@ jobs:
       contents: write
 
     steps:
-      # CORRECTION ICI : On supprime la ligne "token: ..." inutile
       - uses: actions/checkout@v4
       
       - name: Set up Python
@@ -22,18 +21,29 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Installation des librairies (psycopg2-binary est bien là pour Supabase !)
+      # Installation des librairies classiques + celles pour l'IA NLP de votre partenaire
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install yfinance tiingo pandas sqlalchemy psycopg2-binary tabulate
+          pip install yfinance tiingo pandas sqlalchemy psycopg2-binary tabulate transformers torch requests
 
-      - name: Run pipeline
+      # ÉTAPE 1 : Votre pipeline (Prix, MACD, RSI -> Supabase)
+      - name: Run Market Data Pipeline
         env:
           TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
           DB_URL: ${{ secrets.DB_URL }}
         run: python donne_collectes_nettoye.py
 
+      # ÉTAPE 2 : Le pipeline NLP (Articles, FinBERT -> Supabase)
+      - name: Run News Sentiment Pipeline
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+          GNEWS_API_KEY: ${{ secrets.GNEWS_API_KEY }}
+        # ⚠️ ATTENTION : Remplacez "analyse_sentiment.py" par le vrai nom du fichier de votre partenaire s'il est différent !
+        run: python analyse_sentiment.py
+
+      # ÉTAPE 3 : Sauvegarde des historiques CSV sur le dépôt
       - name: Commit and push changes
         run: |
           git config user.name "github-actions[bot]"
@@ -43,6 +53,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "Aucun changement à committer."
           else
-            git commit -m "Auto: update prix $(date -u +'%Y-%m-%d %H:%M:%S')"
+            git commit -m "Auto: update prix et sentiments $(date -u +'%Y-%m-%d %H:%M:%S')"
             git push
           fi
