@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 PIPELINE COMPLET : Collecte → Nettoyage → Signaux → BD PostgreSQL Cloud → Update auto
-Modifié pour SUPABASE avec LISTE ÉLARGIE (23 actifs) + SYNCHRO SENTIMENTS NLP (FinBERT)
+Modifié pour SUPABASE avec LISTE ÉLARGIE (23 actifs)
 """
 import os
 import time
@@ -79,16 +79,6 @@ class Prediction(Base):
     actual_close = Column(Float)
     model = Column(String)
     signal = Column(String)
-    stock = relationship("Stock")
-
-# NOUVELLE TABLE : Pour stocker l'humeur des articles de presse
-class DailySentiment(Base):
-    __tablename__ = 'daily_sentiment'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    date = Column(Date, nullable=False)
-    symbol = Column(String, ForeignKey('stocks.symbol'), nullable=False)
-    sentiment_score = Column(Float, default=0.0)
-    articles_count = Column(Integer, default=0)
     stock = relationship("Stock")
 
 # Création des tables si nécessaire
@@ -358,63 +348,6 @@ def generate_signals():
         
     session.close()
 
-# ====================== NOUVEAU : SYNCHRONISATION SENTIMENTS ======================
-def sync_sentiment_to_db():
-    if not engine: return
-    session = Session()
-    print("\n--- SYNCHRONISATION DES SENTIMENTS NLP VERS LA BD ---")
-    
-    # URL directe vers le fichier généré par le script de votre partenaire
-    github_url = "https://raw.githubusercontent.com/adam-hassen/stock-auto-update/main/data/articles_sentiment/ALL_ARTICLES_MASTER.csv"
-    local_path = "data/articles_sentiment/ALL_ARTICLES_MASTER.csv"
-    
-    try:
-        # On essaie d'abord de lire en local, sinon on prend sur internet
-        if os.path.exists(local_path):
-            df_news = pd.read_csv(local_path)
-            print("Fichier local NLP trouvé.")
-        else:
-            df_news = pd.read_csv(github_url)
-            print("Fichier NLP téléchargé depuis GitHub.")
-            
-        if df_news.empty:
-            print("Le fichier NLP est vide.")
-            return
-
-        # Nettoyage de la date (pour n'avoir que le format AAAA-MM-JJ)
-        df_news['date_clean'] = pd.to_datetime(df_news['date_publication']).dt.date
-        
-        # On groupe par action (symbol) et par jour pour faire la moyenne du sentiment
-        daily_stats = df_news.groupby(['symbol', 'date_clean']).agg(
-            sentiment_score=('score_pondere', 'mean'),
-            articles_count=('article_id', 'count')
-        ).reset_index()
-
-        for _, row in daily_stats.iterrows():
-            # Vérifie si l'enregistrement existe déjà pour ce jour et ce symbole
-            existing = session.query(DailySentiment).filter_by(date=row['date_clean'], symbol=str(row['symbol'])).first()
-            
-            if existing:
-                existing.sentiment_score = float(row['sentiment_score'])
-                existing.articles_count = int(row['articles_count'])
-            else:
-                new_sentiment = DailySentiment(
-                    date=row['date_clean'],
-                    symbol=str(row['symbol']),
-                    sentiment_score=float(row['sentiment_score']),
-                    articles_count=int(row['articles_count'])
-                )
-                session.add(new_sentiment)
-                
-        session.commit()
-        print(f"✅ {len(daily_stats)} jours de scores NLP insérés/mis à jour dans la base Supabase !")
-
-    except Exception as e:
-        print(f"❌ Erreur lors de la synchronisation des sentiments : {e}")
-        session.rollback()
-    finally:
-        session.close()
-
 # ====================== GIT PUSH ======================
 def commit_and_push():
     subprocess.run(["git", "config", "user.name", "GitHub Actions Bot"])
@@ -434,7 +367,6 @@ def main():
     collect_yfinance()
     collect_tiingo()
     generate_signals()
-    sync_sentiment_to_db() # <-- NOUVELLE ÉTAPE AJOUTÉE ICI
     commit_and_push()
     print("🏁 PIPELINE TERMINÉ")
 
